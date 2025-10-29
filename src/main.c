@@ -92,6 +92,22 @@ void read_servers() {
     fclose(file);
 }
 
+BOOL delete_ssl_value() {
+    HKEY hKey;
+    LONG result;
+    const char* keyPath = "Software\\MRIM\\Agent";
+    
+    result = RegOpenKeyExA(HKEY_CURRENT_USER, keyPath, 0, KEY_WRITE, &hKey);
+    if (result != ERROR_SUCCESS) {
+        return TRUE;
+    }
+    
+    result = RegDeleteValueA(hKey, "ssl");
+    RegCloseKey(hKey);
+    
+    return (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND);
+}
+
 BOOL write_registry(const char* server_address) {
     HKEY hKey;
     LONG result;
@@ -112,7 +128,9 @@ BOOL write_registry(const char* server_address) {
         return FALSE;
     }
     
-    if (selected_version == 1) {
+    if (selected_version == 0) {
+        RegDeleteValueA(hKey, "ssl");
+    } else {
         const char* ssl_value = "deny";
         result = RegSetValueExA(hKey, "ssl", 0, REG_SZ, 
                               (BYTE*)ssl_value, strlen(ssl_value) + 1);
@@ -120,6 +138,29 @@ BOOL write_registry(const char* server_address) {
     
     RegCloseKey(hKey);
     return (result == ERROR_SUCCESS);
+}
+
+void check_current_settings() {
+    HKEY hKey;
+    LONG result;
+    const char* keyPath = "Software\\MRIM\\Agent";
+    
+    result = RegOpenKeyExA(HKEY_CURRENT_USER, keyPath, 0, KEY_READ, &hKey);
+    if (result == ERROR_SUCCESS) {
+        char ssl_value[20] = "";
+        DWORD size = sizeof(ssl_value);
+        if (RegQueryValueExA(hKey, "ssl", NULL, NULL, (BYTE*)ssl_value, &size) == ERROR_SUCCESS) {
+            selected_version = 1;
+            SendMessage(hRadio64, BM_SETCHECK, BST_CHECKED, 0);
+            SendMessage(hRadioOld, BM_SETCHECK, BST_UNCHECKED, 0);
+        } else {
+            selected_version = 0;
+            SendMessage(hRadioOld, BM_SETCHECK, BST_CHECKED, 0);
+            SendMessage(hRadio64, BM_SETCHECK, BST_UNCHECKED, 0);
+        }
+        
+        RegCloseKey(hKey);
+    }
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -154,7 +195,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 SendMessageA(hListBox, LB_ADDSTRING, 0, (LPARAM)servers[i].name);
             }
             
-            SendMessage(hRadioOld, BM_SETCHECK, BST_CHECKED, 0);
+            check_current_settings();
             break;
             
         case WM_COMMAND:
@@ -162,7 +203,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 int selected = (int)SendMessage(hListBox, LB_GETCURSEL, 0, 0);
                 if (selected != LB_ERR) {
                     if (write_registry(servers[selected].address)) {
-                        MessageBoxA(hwnd, "Сервер успешно изменен!", "Успех", MB_OK);
+                        char success_msg[256];
+                        sprintf(success_msg, "Сервер успешно изменен на: %s\nВерсия: %s", 
+                                servers[selected].address,
+                                selected_version == 0 ? "<5.X" : "6.4");
+                        MessageBoxA(hwnd, success_msg, "Успех", MB_OK);
                     } else {
                         MessageBoxA(hwnd, "Ошибка записи в реестр!", "Ошибка", MB_OK);
                     }
